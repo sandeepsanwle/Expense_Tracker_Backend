@@ -1,5 +1,21 @@
+const mongoose = require('mongoose');
 const { validationResult } = require('express-validator');
 const Expense = require('../models/Expense');
+const ExpenseGroup = require('../models/ExpenseGroup');
+
+async function resolveGroupId(userId, groupValue) {
+  if (groupValue === undefined || groupValue === null || groupValue === '') {
+    return null;
+  }
+  if (!mongoose.Types.ObjectId.isValid(groupValue)) {
+    return { error: 'Invalid group id' };
+  }
+  const g = await ExpenseGroup.findById(groupValue);
+  if (!g || g.user.toString() !== userId.toString()) {
+    return { error: 'Group not found' };
+  }
+  return g._id;
+}
 
 // @desc    Create a new expense
 // @route   POST /api/expenses
@@ -10,16 +26,27 @@ const createExpense = async (req, res) => {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const { title, amount, date } = req.body;
+    const { title, amount, date, group: groupBody } = req.body;
+
+    const resolved = await resolveGroupId(req.user._id, groupBody);
+    if (resolved && resolved.error) {
+      return res.status(400).json({ success: false, message: resolved.error });
+    }
 
     const expense = await Expense.create({
       title,
       amount,
       date: date || Date.now(),
       user: req.user._id,
+      group: resolved || null,
     });
 
-    res.status(201).json({ success: true, data: expense });
+    const data = await Expense.findById(expense._id).populate(
+      'group',
+      'name budget'
+    );
+
+    res.status(201).json({ success: true, data });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -33,9 +60,27 @@ const createExpense = async (req, res) => {
 // @route   GET /api/expenses?month=3&year=2026
 const getExpenses = async (req, res) => {
   try {
-    const { month, year } = req.query;
+    const { month, year, groupId } = req.query;
 
     let query = { user: req.user._id };
+
+    if (groupId === 'none') {
+      query.$or = [{ group: null }, { group: { $exists: false } }];
+    } else if (groupId) {
+      if (!mongoose.Types.ObjectId.isValid(groupId)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid groupId',
+        });
+      }
+      const g = await ExpenseGroup.findById(groupId);
+      if (g && g.user.toString() === req.user._id.toString()) {
+        query.group = g._id;
+      } else {
+        // Budget deleted or not yours — return empty list (client may still have a stale filter)
+        query.group = new mongoose.Types.ObjectId(groupId);
+      }
+    }
 
     // If month and year are provided, filter by date range
     if (month && year) {
@@ -48,7 +93,9 @@ const getExpenses = async (req, res) => {
       query.date = { $gte: startDate, $lte: endDate };
     }
 
-    const expenses = await Expense.find(query).sort({ date: -1 });
+    const expenses = await Expense.find(query)
+      .populate('group', 'name budget')
+      .sort({ date: -1 });
 
     // Calculate total amount
     const total = expenses.reduce((sum, exp) => sum + exp.amount, 0);
@@ -161,10 +208,22 @@ const updateExpense = async (req, res) => {
       });
     }
 
-    expense = await Expense.findByIdAndUpdate(req.params.id, req.body, {
+    const payload = {};
+    if (req.body.title !== undefined) payload.title = req.body.title;
+    if (req.body.amount !== undefined) payload.amount = req.body.amount;
+    if (req.body.date !== undefined) payload.date = req.body.date;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'group')) {
+      const resolved = await resolveGroupId(req.user._id, req.body.group);
+      if (resolved && resolved.error) {
+        return res.status(400).json({ success: false, message: resolved.error });
+      }
+      payload.group = resolved;
+    }
+
+    expense = await Expense.findByIdAndUpdate(req.params.id, payload, {
       new: true,
       runValidators: true,
-    });
+    }).populate('group', 'name budget');
 
     res.status(200).json({ success: true, data: expense });
   } catch (error) {

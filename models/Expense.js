@@ -23,11 +23,17 @@ const expenseSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    group: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ExpenseGroup',
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
 // Index for efficient monthly queries
 expenseSchema.index({ user: 1, date: -1 });
+expenseSchema.index({ user: 1, group: 1, date: -1 });
 
 module.exports = mongoose.model('Expense', expenseSchema);

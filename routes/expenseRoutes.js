@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { body } = require('express-validator');
 const {
   createExpense,
@@ -26,6 +27,13 @@ router.post(
       .withMessage('Amount must be a number')
       .custom((value) => value > 0)
       .withMessage('Amount must be greater than 0'),
+    body('group')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null || value === undefined || value === '') return true;
+        return mongoose.Types.ObjectId.isValid(value);
+      })
+      .withMessage('Invalid group id'),
   ],
   createExpense
 );
@@ -46,6 +54,13 @@ router.put(
       .withMessage('Amount must be a number')
       .custom((value) => value > 0)
       .withMessage('Amount must be greater than 0'),
+    body('group')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null || value === undefined || value === '') return true;
+        return mongoose.Types.ObjectId.isValid(value);
+      })
+      .withMessage('Invalid group id'),
   ],
   updateExpense
 );
